@@ -37,6 +37,7 @@ func main() {
 
 	var appender Appender
 	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
 	appender.ticker = ticker
 
 	appender.lastFileChan = make(chan string, 100)
@@ -122,6 +123,7 @@ func (s *Appender) openFile() {
 
 func (s *Appender) closeFile() {
 	// s.writer.Flush()
+	s.ticker.Stop()
 	s.file.Close()
 }
 
