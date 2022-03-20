@@ -21,8 +21,9 @@ import (
 var (
 	compressOld = flag.Bool("gzip", false, "Gzip old files")
 	outputFile  = flag.String("output", "./output.log", "Output file")
-	maxFiles    = flag.Int("max-files", 10, "Maximum files to preserve")
-	maxFileSize = flag.Int("max-size", 10*1024*1024, "Maximum file size")
+	maxFiles    = flag.Int("max-files", 31, "Maximum files to preserve")
+	maxFileSize = flag.Int("max-size", 300*1024*1024, "Maximum file size")
+	timeInsert  = flag.Bool("time", false, "add timestamp default false, use -time=true")
 )
 
 func main() {
@@ -35,6 +36,9 @@ func main() {
 	flag.Parse()
 
 	var appender Appender
+	ticker := time.NewTicker(time.Minute)
+	appender.ticker = ticker
+
 	appender.lastFileChan = make(chan string, 100)
 	appender.openFile()
 	defer appender.closeFile()
@@ -42,41 +46,47 @@ func main() {
 	go appender.manageFiles()
 
 	reader := bufio.NewReader(os.Stdin)
+	// var readChan chan string
+	readChan := make(chan string)
+	go func() {
+		for {
+			line, read_err := reader.ReadString('\n')
+			if read_err == io.EOF {
+				// appender.closeFile()
+				log.Fatalln("Exit: stdin is EOF :", read_err)
+			}
 
+			if len(line) == 0 {
+				continue
+			}
+			readChan <- line
+		}
+	}()
 	for !appender.closed {
 
-		line, read_err := reader.ReadString('\n')
-		if read_err == io.EOF {
-			appender.closeFile()
-			log.Fatalln("ERROR: stdin is EOF :", read_err)
-		}
+		select {
+		case t := <-ticker.C:
+			fmt.Println("Tick at", t)
+			if t.Hour() == 0 && t.Minute() == 0 {
+				appender.rotateFile()
+			}
 
-		if len(line) == 0 {
-			continue
+		case line := <-readChan:
+			appender.Append(line)
 		}
-
-		appender.Append(line)
 
 	}
-
-	// for !appender.closed {
-	// 	// fmt.Println("Reading.")
-	// 	c, err := scanner.ReadByte()
-	// 	if err == io.EOF {
-	// 		break
-	// 	}
-	// 	appender.AppendByte(c)
-	// }
 
 	appender.wg.Wait()
 }
 
 type Appender struct {
-	file         *os.File
-	filePath     string
-	writer       *bufio.Writer
+	file     *os.File
+	filePath string
+	// writer       *bufio.Writer
 	bytesWritten int
 	closed       bool
+	ticker       *time.Ticker
 
 	wg           sync.WaitGroup
 	lastFileChan chan string
@@ -84,7 +94,7 @@ type Appender struct {
 
 func (s *Appender) listenForSignals() {
 	c := make(chan os.Signal, 1)
-	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 
 	// Block until a signal is received.
 	<-c
@@ -102,7 +112,7 @@ func (s *Appender) openFile() {
 
 	s.file = f
 	s.filePath = *outputFile
-	s.writer = bufio.NewWriter(f)
+	// s.writer = bufio.NewWriter(f)
 	st, err := s.file.Stat()
 	if err != nil {
 		log.Fatalln("ERROR", err)
@@ -111,7 +121,7 @@ func (s *Appender) openFile() {
 }
 
 func (s *Appender) closeFile() {
-	s.writer.Flush()
+	// s.writer.Flush()
 	s.file.Close()
 }
 
@@ -185,7 +195,7 @@ func (s *Appender) compressFile(fileName string) {
 }
 
 func (s *Appender) archiveFileName() string {
-	ts := time.Now().Format("2006-01-02T15.04.05.000000000Z0700")
+	ts := time.Now().Format("2006-01-02T150405.999")
 	return s.filePath + "_" + ts
 }
 
@@ -193,17 +203,11 @@ func (s *Appender) Append(line string) {
 	if s.bytesWritten >= *maxFileSize {
 		s.rotateFile()
 	}
-	n, _ := s.file.WriteString(line)
-	// s.file.WriteString()
-
-	s.bytesWritten += n + 1
-}
-
-func (s *Appender) AppendByte(c byte) {
-	if s.bytesWritten >= *maxFileSize {
-		s.rotateFile()
+	if *timeInsert {
+		curT := time.Now().Format("2006-01-02 15:04:05 - ")
+		line = curT + line
 	}
-	n, _ := s.file.Write([]byte{c})
+	n, _ := s.file.WriteString(line)
 	// s.file.WriteString()
 
 	s.bytesWritten += n + 1
