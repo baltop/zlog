@@ -67,7 +67,7 @@ func main() {
 
 		select {
 		case t := <-ticker.C:
-			fmt.Println("Tick at", t)
+			// fmt.Println("Tick at", t)
 			if t.Hour() == 0 && t.Minute() == 0 {
 				appender.rotateFile()
 			}
